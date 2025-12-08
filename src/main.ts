@@ -28,10 +28,15 @@ const uniTracer = device.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM 
 const uniTemporal = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 const uniSpatial = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
-const tracerMod = device.createShaderModule({ code: await (await fetch('/src/tracer.wgsl')).text() });
-const temporalMod = device.createShaderModule({ code: await (await fetch('/src/svgf_temporal.wgsl')).text() });
-const spatialMod = device.createShaderModule({ code: await (await fetch('/src/svgf_spatial.wgsl')).text() });
-const presentMod = device.createShaderModule({ code: await (await fetch('/src/present.wgsl')).text() });
+const tracerURL = new URL('./tracer.wgsl', import.meta.url);
+const temporalURL = new URL('./svgf_temporal.wgsl', import.meta.url);
+const spatialURL = new URL('./svgf_spatial.wgsl', import.meta.url);
+const presentURL = new URL('./present.wgsl', import.meta.url);
+
+const tracerMod = device.createShaderModule({ code: await (await fetch(tracerURL)).text() });
+const temporalMod = device.createShaderModule({ code: await (await fetch(temporalURL)).text() });
+const spatialMod = device.createShaderModule({ code: await (await fetch(spatialURL)).text() });
+const presentMod = device.createShaderModule({ code: await (await fetch(presentURL)).text() });
 
 const tracerBind = device.createBindGroupLayout({
   entries: [
