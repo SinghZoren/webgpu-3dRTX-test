@@ -12,10 +12,10 @@ struct Uniforms {
 @group(0) @binding(5) var colorOut : texture_storage_2d<rgba16float, write>;
 
 fn wNorm(a: vec3<f32>, b: vec3<f32>) -> f32 {
-  return exp(-max(0.0, 1.0 - dot(a, b)) * 50.0);
+  return exp(-max(0.0, 1.0 - dot(a, b)) * 150.0);
 }
 fn wDepth(a: f32, b: f32) -> f32 {
-  return exp(-abs(a - b) * 30.0);
+  return exp(-abs(a - b) * 80.0);
 }
 
 @compute @workgroup_size(8,8)
@@ -41,7 +41,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
       let c = textureLoad(colorIn, q, 0).xyz;
       let n = textureLoad(normalDepthIn, q, 0).xyz * 2.0 - 1.0;
       let d = textureLoad(normalDepthIn, q, 0).w;
-      let w = wNorm(n0, n) * wDepth(d0, d) * exp(-length(c - c0) / (0.1 + sigma));
+      let w = wNorm(n0, n) * wDepth(d0, d) * exp(-length(c - c0) / (0.05 + sigma));
       sum += c * w;
       wsum += w;
     }

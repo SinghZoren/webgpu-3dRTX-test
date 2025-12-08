@@ -27,7 +27,7 @@ fn tonemapACES(x: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fsMain(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
-  let c = textureSampleLevel(texIn, samp, uv, 0.0).xyz;
+  let c = textureSampleLevel(texIn, samp, uv, 0.0).xyz * 1.2;
   let px = u32(uv.x * 65535.0);
   let py = u32(uv.y * 65535.0);
   var x = px ^ (py * 0x27d4eb2du) ^ 0x165667b1u;

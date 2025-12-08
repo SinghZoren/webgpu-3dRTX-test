@@ -245,7 +245,7 @@ function frame() {
       { width: WIDTH, height: HEIGHT }
     );
 
-    const zero = new Uint8Array(WIDTH * HEIGHT * 8); 
+    const zero = new Uint8Array(WIDTH * HEIGHT * 8);
     device.queue.writeTexture(
       { texture: momentsA },
       zero,
@@ -258,30 +258,7 @@ function frame() {
       { offset: 0, bytesPerRow: WIDTH * 8, rowsPerImage: HEIGHT },
       { width: WIDTH, height: HEIGHT, depthOrArrayLayers: 1 }
     );
-
-
-    {
-      const view = context.getCurrentTexture().createView();
-      const bg = device.createBindGroup({
-        layout: presentBind,
-        entries: [
-          { binding: 0, resource: colorRaw.createView() },
-          { binding: 1, resource: sampler },
-        ]
-      });
-      const pass = encoder.beginRenderPass({
-        colorAttachments: [{ view, loadOp: 'clear', storeOp: 'store', clearValue: {r:0,g:0,b:0,a:1} }]
-      });
-      pass.setPipeline(presentPipeline);
-      pass.setBindGroup(0, bg);
-      pass.draw(3,1,0,0);
-      pass.end();
-    }
-
-    device.queue.submit([encoder.finish()]);
-    frameIndex = 2;
-    requestAnimationFrame(frame);
-    return;
+    frameIndex = 1;
   }
 
 
@@ -310,23 +287,33 @@ function frame() {
 
 
   {
-    const momentsLatest = (frameIndex % 2 === 0) ? momentsB : momentsA; // written this frame
-    const bg = device.createBindGroup({
-      layout: spatialBind,
-      entries: [
-        { binding: 0, resource: { buffer: uniSpatial } },
-        { binding: 1, resource: temporalOut.createView() },
-        { binding: 2, resource: gbufAlbedo.createView() },
-        { binding: 3, resource: gbufNormalDepth.createView() },
-        { binding: 4, resource: momentsLatest.createView() },
-        { binding: 5, resource: spatialOut.createView() },
-      ]
-    });
-    const pass = encoder.beginComputePass();
-    pass.setPipeline(spatialPipeline);
-    pass.setBindGroup(0, bg);
-    pass.dispatchWorkgroups(Math.ceil(WIDTH/8), Math.ceil(HEIGHT/8));
-    pass.end();
+    const momentsLatest = (frameIndex % 2 === 0) ? momentsB : momentsA;
+    const writeSpatial = (step: number, inputTex: GPUTexture, outputTex: GPUTexture) => {
+      const resF32 = new Float32Array([WIDTH, HEIGHT]);
+      const stepU32 = new Uint32Array([step, 0]);
+      device.queue.writeBuffer(uniSpatial, 0, resF32);
+      device.queue.writeBuffer(uniSpatial, 8, stepU32);
+      const bg = device.createBindGroup({
+        layout: spatialBind,
+        entries: [
+          { binding: 0, resource: { buffer: uniSpatial } },
+          { binding: 1, resource: inputTex.createView() },
+          { binding: 2, resource: gbufAlbedo.createView() },
+          { binding: 3, resource: gbufNormalDepth.createView() },
+          { binding: 4, resource: momentsLatest.createView() },
+          { binding: 5, resource: outputTex.createView() },
+        ]
+      });
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(spatialPipeline);
+      pass.setBindGroup(0, bg);
+      pass.dispatchWorkgroups(Math.ceil(WIDTH/8), Math.ceil(HEIGHT/8));
+      pass.end();
+    };
+
+    writeSpatial(1, temporalOut, spatialOut);
+    writeSpatial(2, spatialOut, temporalOut);
+    writeSpatial(4, temporalOut, spatialOut);
   }
 
 
