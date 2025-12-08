@@ -16,16 +16,83 @@ struct Uniforms {
 @group(0) @binding(4) var blueNoiseTex : texture_2d<f32>;
 @group(0) @binding(5) var blueNoiseSamp : sampler;
 
-
-fn hash2(p: vec2<u32>) -> vec2<f32> {
-  let x = p.x * 1664525u + 1013904223u;
-  let y = p.y * 22695477u + 1u;
-  return vec2<f32>(f32(x % 1000003u) / 1000003.0, f32(y % 1000003u) / 1000003.0);
+fn splitmix32(x0: u32) -> u32 {
+  var x = x0 + 0x9E3779B9u;
+  var z = x;
+  z = (z ^ (z >> 16u)) * 0x85EBCA6Bu;
+  z = (z ^ (z >> 13u)) * 0xC2B2AE35u;
+  z = z ^ (z >> 16u);
+  return z;
 }
 
-fn sampleBlue(pix: vec2<u32>, frame: u32) -> vec2<f32> {
-  let h1 = hash2(pix + vec2<u32>(frame*37u, frame*73u));
-  return h1;
+fn make_seed(px: u32, py: u32, frame: u32, sample: u32) -> u32 {
+  let s = (px * 0x1f123bb5u) ^ (py * 0x5f7a0e1du) ^ (frame * 0x9e3779b9u) ^ (sample * 0x68bc21ebu);
+  return splitmix32(s);
+}
+
+struct PCG {
+  state: u32,
+};
+
+fn pcg_step(state: u32) -> u32 {
+  let mul: u32 = 747796405u;
+  let inc: u32 = 2891336453u;
+  var x = state * mul + inc;
+  let rot = ((x >> 28u) + 4u) & 31u;
+  var word = ((x >> rot) ^ x) * 277803737u;
+  return word;
+}
+
+fn pcg_init(px: u32, py: u32, frame: u32, sample: u32) -> PCG {
+  return PCG(make_seed(px, py, frame, sample));
+}
+
+fn rng_u32(r: ptr<function, PCG>) -> u32 {
+  let v = pcg_step((*r).state);
+  (*r).state = v;
+  return v;
+}
+
+fn rng_f32(r: ptr<function, PCG>) -> f32 {
+  let u = rng_u32(r) >> 8u;
+  return f32(u) * (1.0 / 16777216.0);
+}
+
+fn radicalInverseVdC(bits: u32) -> f32 {
+  var b = bits;
+  b = (b << 16u) | (b >> 16u);
+  b = ((b & 0x55555555u) << 1u) | ((b & 0xAAAAAAAAu) >> 1u);
+  b = ((b & 0x33333333u) << 2u) | ((b & 0xCCCCCCCCu) >> 2u);
+  b = ((b & 0x0F0F0F0Fu) << 4u) | ((b & 0xF0F0F0F0u) >> 4u);
+  b = ((b & 0x00FF00FFu) << 8u) | ((b & 0xFF00FF00u) >> 8u);
+  return f32(b) * 2.3283064365386963e-10;
+}
+
+fn hammersley(i: u32, n: u32, pix: vec2<u32>, frame: u32) -> vec2<f32> {
+  var rng = pcg_init(pix.x, pix.y, frame, i);
+  var rng2 = pcg_init(pix.x ^ 123u, pix.y ^ 321u, frame, i);
+  let jitter = vec2<f32>(rng_f32(&rng), rng_f32(&rng2));
+  return vec2<f32>((f32(i) + jitter.x) / f32(n), radicalInverseVdC(i));
+}
+
+fn halton(i0: u32, base: u32) -> f32 {
+  var i = i0;
+  var f = 1.0;
+  var r = 0.0;
+  let inv = 1.0 / f32(base);
+  loop {
+    if (i == 0u) { break; }
+    f = f * inv;
+    r = r + f * f32(i % base);
+    i = i / base;
+  }
+  return r;
+}
+
+fn pixel_jitter(frame: u32) -> vec2<f32> {
+  let jx = halton(frame + 1u, 2u);
+  let jy = halton(frame + 1u, 3u);
+  return vec2<f32>(jx, jy) - vec2<f32>(0.5, 0.5);
 }
 
 struct Material {
@@ -193,8 +260,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let spp = 4u; 
 
   for (var s = 0u; s < spp; s = s + 1u) {
-    let xi = sampleBlue(pix + vec2<u32>(s*53u, s*97u), fi + s);
-    var uv = ((vec2<f32>(pix) + xi) / res) * 2.0 - 1.0;
+    var rng = pcg_init(pix.x, pix.y, fi, s);
+    let jitterFrame = pixel_jitter(fi);
+    let xi = vec2<f32>(rng_f32(&rng), rng_f32(&rng));
+    var uv = ((vec2<f32>(pix) + xi + jitterFrame) / res) * 2.0 - 1.0;
     uv.x *= res.x / res.y;
 
     let ro = uni.camPos.xyz;
@@ -230,7 +299,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         break;
       }
 
-      let xiL = hash2(pix + vec2<u32>(bounce + s*11u, fi + s*13u));
+      let xiL = vec2<f32>(rng_f32(&rng), rng_f32(&rng));
       let lp = sampleRectLight(rect, xiL);
       let ldir = normalize(lp - h.p);
       let dist = length(lp - h.p);
@@ -245,7 +314,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         radiance += throughput * rect.emit * bsdf * cosL / max(1e-4, pdfL);
       }
 
-      let xiD = hash2(pix + vec2<u32>(bounce*17u + fi + s*19u, fi*13u + s*23u));
+      let xiD = vec2<f32>(rng_f32(&rng), rng_f32(&rng));
       let phi = 6.2831853 * xiD.x;
       let r = sqrt(xiD.y);
       let x = r * cos(phi);
@@ -264,7 +333,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
       if (bounce >= 2u) {
         let p = clamp(max(throughput.x, max(throughput.y, throughput.z)), 0.2, 0.95);
-        let rrr = hash2(pix + vec2<u32>(bounce*31u + fi + s*29u, fi*7u + s*31u)).x;
+        let rrr = rng_f32(&rng);
         if (rrr > p) { break; }
         throughput /= p;
       }
