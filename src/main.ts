@@ -2,6 +2,11 @@ import { vec3 } from 'gl-matrix';
 import { initWebGPU, createTex } from './gpu';
 import { makeCameraBasis } from './camera';
 
+import tracerSource from './tracer.wgsl?raw';
+import presentSource from './present.wgsl?raw';
+import temporalSource from './svgf_temporal.wgsl?raw';
+import spatialSource from './svgf_spatial.wgsl?raw';
+
 async function main() {
   const canvas = document.getElementById('c') as HTMLCanvasElement;
   const fpsElem = document.getElementById('fps');
@@ -32,16 +37,11 @@ async function main() {
   
   const { device, context, format } = await initWebGPU(canvas);
 
-  async function loadShader(path: string) {
-    const res = await fetch(path);
-    return res.text();
-  }
 
-
-  const tracerShader = device.createShaderModule({ code: await loadShader('/src/tracer.wgsl') });
-  const presentShader = device.createShaderModule({ code: await loadShader('/src/present.wgsl') });
-  const temporalShader = device.createShaderModule({ code: await loadShader('/src/svgf_temporal.wgsl') });
-  const spatialShader = device.createShaderModule({ code: await loadShader('/src/svgf_spatial.wgsl') });
+  const tracerShader = device.createShaderModule({ code: tracerSource });
+  const presentShader = device.createShaderModule({ code: presentSource });
+  const temporalShader = device.createShaderModule({ code: temporalSource });
+  const spatialShader = device.createShaderModule({ code: spatialSource });
 
 
   const tracerUniformBuffer = device.createBuffer({
