@@ -58,3 +58,10 @@ fn pixel_jitter(frame: u32) -> vec2<f32> {
   return vec2<f32>(jx, jy) - vec2<f32>(0.5, 0.5);
 }
 
+
+
+
+
+
+
+

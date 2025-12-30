@@ -39,3 +39,10 @@ export function buildScene() {
   return { materials, planes, spheres, ycyl, rectLights };
 }
 
+
+
+
+
+
+
+

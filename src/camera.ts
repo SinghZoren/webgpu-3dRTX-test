@@ -9,8 +9,15 @@ export function buildBasis(aspect: number) {
   const w = vec3.normalize(vec3.create(), vec3.sub(vec3.create(), camTarget, camPos));
   const u = vec3.normalize(vec3.create(), vec3.cross(vec3.create(), w, camUp));
   const v = vec3.cross(vec3.create(), u, w);
-  const halfH = Math.tan(fovY * 0.5);
-  const halfW = halfH * aspect;
+  
+  let halfH = Math.tan(fovY * 0.5);
+  let halfW = halfH * aspect;
+
+  if (aspect < 1.0) {
+    halfW = Math.tan(fovY * 0.5);
+    halfH = halfW / aspect;
+  }
+
   vec3.scale(u, u, halfW);
   vec3.scale(v, v, halfH);
   return { camPos, camU: u, camV: v, camW: w };
@@ -33,8 +40,15 @@ export function makeCameraBasis(
   const target = vec3.add(vec3.create(), pos, dir) as Float32Array;
   const { u, v, w, pos: p } = lookAt(pos, target, up);
   const fov = (fovDeg * Math.PI) / 180;
-  const halfH = Math.tan(fov * 0.5);
-  const halfW = halfH * aspect;
+  
+  let halfH = Math.tan(fov * 0.5);
+  let halfW = halfH * aspect;
+
+
+  if (aspect < 1.0) {
+    halfW = Math.tan(fov * 0.5);
+    halfH = halfW / aspect;
+  }
 
   vec3.scale(u, u, halfW);
   vec3.scale(v, v, halfH);

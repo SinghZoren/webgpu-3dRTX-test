@@ -9,4 +9,6 @@ export type Uniforms = {
   camW:   Float32Array;
   counts: Uint32Array;      
   preset: Uint32Array;      
+  testLight: Float32Array;  
+  testEmit: Float32Array;   
 };

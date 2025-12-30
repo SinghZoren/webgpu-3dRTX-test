@@ -6,14 +6,31 @@ struct Uniforms {
 
 @group(0) @binding(0) var<uniform> uni : Uniforms;
 @group(0) @binding(1) var colorIn : texture_2d<f32>;
-@group(0) @binding(2) var albedoIn : texture_2d<f32>;
-@group(0) @binding(3) var normalDepthIn : texture_2d<f32>;
 @group(0) @binding(4) var prevColor : texture_2d<f32>;
 @group(0) @binding(5) var prevMoments : texture_2d<f32>;
 @group(0) @binding(6) var prevColorOut : texture_storage_2d<rgba16float, write>;
 @group(0) @binding(7) var momentsOut : texture_storage_2d<rgba16float, write>;
 
 fn luma(c: vec3<f32>) -> f32 { return dot(c, vec3(0.299,0.587,0.114)); }
+
+struct MinMax {
+  mn: vec3<f32>,
+  mx: vec3<f32>,
+};
+
+fn neighborhoodMinMax(img: texture_2d<f32>, p: vec2<i32>) -> MinMax {
+  var mn = vec3<f32>(1e9);
+  var mx = vec3<f32>(-1e9);
+  for (var dy = -1; dy <= 1; dy = dy + 1) {
+    for (var dx = -1; dx <= 1; dx = dx + 1) {
+      let q = p + vec2<i32>(dx, dy);
+      let c = textureLoad(img, q, 0).xyz;
+      mn = min(mn, c);
+      mx = max(mx, c);
+    }
+  }
+  return MinMax(mn, mx);
+}
 
 @compute @workgroup_size(8,8)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
@@ -33,8 +50,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   mean += delta / n;
   m2 += delta * (val - mean);
 
+
+  let nb = neighborhoodMinMax(colorIn, p);
+  let prevClamped = clamp(prev, nb.mn, nb.mx);
+
   let alpha = 1.0 / n;
-  let accum = mix(prev, cur, alpha);
+  let accum = mix(prevClamped, cur, alpha);
 
   textureStore(prevColorOut, p, vec4<f32>(accum, 1.0));
   textureStore(momentsOut, p, vec4<f32>(mean, m2, 0.0, 0.0));

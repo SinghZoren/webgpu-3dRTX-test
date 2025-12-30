@@ -6,7 +6,6 @@ struct Uniforms {
 
 @group(0) @binding(0) var<uniform> uni : Uniforms;
 @group(0) @binding(1) var colorIn : texture_2d<f32>;
-@group(0) @binding(2) var albedoIn : texture_2d<f32>;
 @group(0) @binding(3) var normalDepthIn : texture_2d<f32>;
 @group(0) @binding(4) var momentsIn : texture_2d<f32>;
 @group(0) @binding(5) var colorOut : texture_storage_2d<rgba16float, write>;
@@ -31,6 +30,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let varMean = textureLoad(momentsIn, p, 0).xy;
   let sigma = sqrt(max(1e-4, varMean.y / max(1.0, varMean.x * varMean.x)));
 
+
+  if (sigma > 0.15) {
+    textureStore(colorOut, p, vec4<f32>(c0, 1.0));
+    return;
+  }
+
   var sum = vec3<f32>(0.0);
   var wsum = 0.0;
 
@@ -41,7 +46,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
       let c = textureLoad(colorIn, q, 0).xyz;
       let n = textureLoad(normalDepthIn, q, 0).xyz * 2.0 - 1.0;
       let d = textureLoad(normalDepthIn, q, 0).w;
-      let w = wNorm(n0, n) * wDepth(d0, d) * exp(-length(c - c0) / (0.05 + sigma));
+      let lumDiff = abs(dot(c, vec3(0.299,0.587,0.114)) - dot(c0, vec3(0.299,0.587,0.114)));
+      let w = wNorm(n0, n) * wDepth(d0, d) * exp(-length(c - c0) / (0.01 + sigma * 0.5)) * exp(-lumDiff / (0.02 + sigma));
       sum += c * w;
       wsum += w;
     }
