@@ -1,7 +1,7 @@
 struct Uniforms {
   resolution : vec2<f32>,
   stepWidth : u32,
-  _pad : u32,
+  enabled : u32,
 };
 
 @group(0) @binding(0) var<uniform> uni : Uniforms;
@@ -25,6 +25,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let step = i32(uni.stepWidth);
 
   let c0 = textureLoad(colorIn, p, 0).xyz;
+  if (uni.enabled == 0u) {
+    textureStore(colorOut, p, vec4<f32>(c0, 1.0));
+    return;
+  }
   let n0 = textureLoad(normalDepthIn, p, 0).xyz * 2.0 - 1.0;
   let d0 = textureLoad(normalDepthIn, p, 0).w;
   let varMean = textureLoad(momentsIn, p, 0).xy;

@@ -14,6 +14,8 @@ struct Uniforms {
 @group(0) @binding(1) var radianceTex : texture_storage_2d<rgba16float, write>;
 @group(0) @binding(2) var gbufAlbedo : texture_storage_2d<rgba16float, write>;
 @group(0) @binding(3) var gbufNormalDepth : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var motionTex : texture_storage_2d<rgba16float, write>;
+@group(0) @binding(5) var idDepthTex : texture_storage_2d<rg32float, write>;
 
 fn splitmix32(x0: u32) -> u32 {
   var x = x0 + 0x9E3779B9u;
@@ -67,13 +69,6 @@ fn radicalInverseVdC(bits: u32) -> f32 {
   return f32(b) * 2.3283064365386963e-10;
 }
 
-fn hammersley(i: u32, n: u32, pix: vec2<u32>, frame: u32) -> vec2<f32> {
-  var rng = pcg_init(pix.x, pix.y, frame, i);
-  var rng2 = pcg_init(pix.x ^ 123u, pix.y ^ 321u, frame, i);
-  let jitter = vec2<f32>(rng_f32(&rng), rng_f32(&rng2));
-  return vec2<f32>((f32(i) + jitter.x) / f32(n), radicalInverseVdC(i));
-}
-
 fn halton(i0: u32, base: u32) -> f32 {
   var i = i0;
   var f = 1.0;
@@ -107,6 +102,7 @@ struct Hit {
   t: f32,
   mat: Material,
   hit: bool,
+  id: f32,
 };
 
 struct BoxHit {
@@ -157,10 +153,6 @@ fn refractDir(i: vec3<f32>, n: vec3<f32>, eta: f32) -> vec3<f32> {
   return eta * i + (eta * cosi - sqrt(k)) * n;
 }
 
-const LAVA_MAX_COUNT = 24u;
-const LAVA_R_BASE : f32 = 0.08;
-const LAVA_R_VAR  : f32 = 0.04;
-
 const boxMin = vec3(-1.75, 0.0, -2.8);
 const boxMax = vec3(1.75, 1.3, -1.4);
 
@@ -169,20 +161,10 @@ fn simTime() -> f32 {
   return base * (uni.settings.x / max(0.25, uni.settings.y));
 }
 
-const lavaPhase = array<f32, 24u>(
-  0.0, 1.5, 3.1, 0.8, 2.4, 4.2, 5.7, 1.1, 2.9, 3.8, 0.3, 5.1,
-  0.6, 1.9, 3.5, 4.8, 0.2, 1.4, 2.7, 4.0, 5.3, 0.9, 2.2, 3.6
-);
-const lavaXSeed = array<f32, 24u>(
-  -0.8, 0.4, -0.2, 0.7, -0.5, 0.1, -0.9, 0.3, 0.6, -0.4, 0.0, -0.1,
-  -0.6, 0.2, -0.3, 0.5, -0.7, 0.1, -0.4, 0.8, -0.2, 0.3, -0.5, 0.0
-);
-const lavaZSeed = array<f32, 24u>(
-  -2.1, -2.2, -2.05, -2.15, -2.25, -2.1, -2.2, -2.0, -2.1, -2.2, -2.15, -2.05,
-  -2.1, -2.2, -2.0, -2.1, -2.2, -2.15, -2.05, -2.1, -2.2, -2.0, -2.1, -2.2
-);
-
 fn lavaBlobCenter(i: u32, t: f32) -> vec3<f32> {
+  let lavaPhase = array<f32, 24u>(0.0, 1.5, 3.1, 0.8, 2.4, 4.2, 5.7, 1.1, 2.9, 3.8, 0.3, 5.1, 0.6, 1.9, 3.5, 4.8, 0.2, 1.4, 2.7, 4.0, 5.3, 0.9, 2.2, 3.6);
+  let lavaXSeed = array<f32, 24u>(-0.8, 0.4, -0.2, 0.7, -0.5, 0.1, -0.9, 0.3, 0.6, -0.4, 0.0, -0.1, -0.6, 0.2, -0.3, 0.5, -0.7, 0.1, -0.4, 0.8, -0.2, 0.3, -0.5, 0.0);
+  let lavaZSeed = array<f32, 24u>(-2.1, -2.2, -2.05, -2.15, -2.25, -2.1, -2.2, -2.0, -2.1, -2.2, -2.15, -2.05, -2.1, -2.2, -2.0, -2.1, -2.2, -2.15, -2.05, -2.1, -2.2, -2.0, -2.1, -2.2);
   let ph = lavaPhase[i];
   let yCycle = (t * 0.4 + ph) % 6.283185;
   let yNorm = 0.5 + 0.5 * sin(yCycle - 1.5707);
@@ -197,12 +179,13 @@ fn lavaBlobCenter(i: u32, t: f32) -> vec3<f32> {
 }
 
 fn lavaBlobRadius(i: u32, t: f32) -> f32 {
+  let lavaPhase = array<f32, 24u>(0.0, 1.5, 3.1, 0.8, 2.4, 4.2, 5.7, 1.1, 2.9, 3.8, 0.3, 5.1, 0.6, 1.9, 3.5, 4.8, 0.2, 1.4, 2.7, 4.0, 5.3, 0.9, 2.2, 3.6);
   let ph = lavaPhase[i];
   let yCycle = (t * 0.4 + ph) % 6.283185;
   let yNorm = 0.5 + 0.5 * sin(yCycle - 1.5707); 
   let heatExpansion = mix(1.2, 0.8, yNorm);
   let wobble = 0.1 * sin(t * 1.5 + ph);
-  return (LAVA_R_BASE + LAVA_R_VAR * wobble) * heatExpansion;
+  return (0.08 + 0.04 * wobble) * heatExpansion;
 }
 
 fn smin(a: f32, b: f32, k: f32) -> f32 {
@@ -221,67 +204,39 @@ fn lavaSDF(p: vec3<f32>, t: f32) -> f32 {
     }
     return d;
 }
-
-fn intersectBox(ro: vec3<f32>, rd: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>) -> BoxHit {
-  var tMin = -1e9; var tMax = 1e9; var n = vec3(0.0);
-  {
-    if (abs(rd.x) < 1e-6) { if (ro.x < bmin.x || ro.x > bmax.x) { return BoxHit(vec3(0.0), vec3(0.0), 0.0, false); } } else {
-      var t0 = (bmin.x - ro.x) / rd.x; var t1 = (bmax.x - ro.x) / rd.x; var n0 = vec3(-1.0, 0.0, 0.0); var n1 = vec3( 1.0, 0.0, 0.0);
-      if (t0 > t1) { let tmp = t0; t0 = t1; t1 = tmp; let tmpn = n0; n0 = n1; n1 = tmpn; }
-      if (t0 > tMin) { tMin = t0; n = n0; } tMax = min(tMax, t1); if (tMax < tMin) { return BoxHit(vec3(0.0), vec3(0.0), 0.0, false); }
-    }
-  }
-  {
-    if (abs(rd.y) < 1e-6) { if (ro.y < bmin.y || ro.y > bmax.y) { return BoxHit(vec3(0.0), vec3(0.0), 0.0, false); } } else {
-      var t0 = (bmin.y - ro.y) / rd.y; var t1 = (bmax.y - ro.y) / rd.y; var n0 = vec3(0.0, -1.0, 0.0); var n1 = vec3(0.0,  1.0, 0.0);
-      if (t0 > t1) { let tmp = t0; t0 = t1; t1 = tmp; let tmpn = n0; n0 = n1; n1 = tmpn; }
-      if (t0 > tMin) { tMin = t0; n = n0; } tMax = min(tMax, t1); if (tMax < tMin) { return BoxHit(vec3(0.0), vec3(0.0), 0.0, false); }
-    }
-  }
-  {
-    if (abs(rd.z) < 1e-6) { if (ro.z < bmin.z || ro.z > bmax.z) { return BoxHit(vec3(0.0), vec3(0.0), 0.0, false); } } else {
-      var t0 = (bmin.z - ro.z) / rd.z; var t1 = (bmax.z - ro.z) / rd.z; var n0 = vec3(0.0, 0.0, -1.0); var n1 = vec3(0.0, 0.0,  1.0);
-      if (t0 > t1) { let tmp = t0; t0 = t1; t1 = tmp; let tmpn = n0; n0 = n1; n1 = tmpn; }
-      if (t0 > tMin) { tMin = t0; n = n0; } tMax = min(tMax, t1); if (tMax < tMin) { return BoxHit(vec3(0.0), vec3(0.0), 0.0, false); }
-    }
-  }
-  let entry = max(tMin, 1e-4); if (tMax < entry) { return BoxHit(vec3(0.0), vec3(0.0), 0.0, false); }
-  let p = ro + entry * rd; return BoxHit(p, n, entry, true);
-}
-
 fn intersectScene(ro: vec3<f32>, rd: vec3<f32>) -> Hit {
-  var best = Hit(vec3(0.0), vec3(0.0), 1e9, Material(vec3(0.0),0.0,0.0,vec3(0.0)), false);
+  var best = Hit(vec3(0.0), vec3(0.0), 1e9, Material(vec3(0.0),0.0,0.0,vec3(0.0)), false, -1.0);
   if (abs(rd.y) > 1e-5) {
     let t = -ro.y / rd.y; if (t > 1e-4 && t < best.t) {
-      let p = ro + t*rd; if (p.z >= -100.0 && p.z <= 100.0) { best = Hit(p, vec3(0.0,1.0,0.0), t, Material(vec3(0.002), 0.1, 0.8, vec3(0.0)), true); }
+      let p = ro + t*rd; if (p.z >= -100.0 && p.z <= 100.0) { best = Hit(p, vec3(0.0,1.0,0.0), t, Material(vec3(0.002), 0.1, 0.8, vec3(0.0)), true, 1.0); }
     }
   }
   if (abs(rd.z) > 1e-5) {
     let t = (-3.0 - ro.z) / rd.z; if (t > 1e-4 && t < best.t) {
-      let p = ro + t*rd; if (p.y >= -100.0 && p.y <= 100.0) { best = Hit(p, vec3(0.0,0.0,1.0), t, Material(vec3(0.002), 0.8, 1.0, vec3(0.0)), true); }
+      let p = ro + t*rd; if (p.y >= -100.0 && p.y <= 100.0) { best = Hit(p, vec3(0.0,0.0,1.0), t, Material(vec3(0.002), 0.8, 1.0, vec3(0.0)), true, 2.0); }
     }
   }
   { 
     let glassMat = Material(vec3(1.0), 0.02, 2.0, vec3(0.0));
     if (abs(rd.x) > 1e-5) {
       let t = (boxMin.x - ro.x) / rd.x; if (t > 1e-4 && t < best.t) {
-        let p = ro + t*rd; if (p.y >= boxMin.y && p.y <= boxMax.y && p.z >= boxMin.z && p.z <= boxMax.z) { best = Hit(p, vec3(1.0, 0.0, 0.0), t, glassMat, true); }
+        let p = ro + t*rd; if (p.y >= boxMin.y && p.y <= boxMax.y && p.z >= boxMin.z && p.z <= boxMax.z) { best = Hit(p, vec3(1.0, 0.0, 0.0), t, glassMat, true, 3.0); }
       }
       let t2 = (boxMax.x - ro.x) / rd.x; if (t2 > 1e-4 && t2 < best.t) {
-        let p = ro + t2*rd; if (p.y >= boxMin.y && p.y <= boxMax.y && p.z >= boxMin.z && p.z <= boxMax.z) { best = Hit(p, vec3(-1.0, 0.0, 0.0), t2, glassMat, true); }
+        let p = ro + t2*rd; if (p.y >= boxMin.y && p.y <= boxMax.y && p.z >= boxMin.z && p.z <= boxMax.z) { best = Hit(p, vec3(-1.0, 0.0, 0.0), t2, glassMat, true, 4.0); }
       }
     }
     if (abs(rd.z) > 1e-5) {
       let t = (boxMin.z - ro.z) / rd.z; if (t > 1e-4 && t < best.t) {
-        let p = ro + t*rd; if (p.y >= boxMin.y && p.y <= boxMax.y && p.x >= boxMin.x && p.x <= boxMax.x) { best = Hit(p, vec3(0.0, 0.0, 1.0), t, glassMat, true); }
+        let p = ro + t*rd; if (p.y >= boxMin.y && p.y <= boxMax.y && p.x >= boxMin.x && p.x <= boxMax.x) { best = Hit(p, vec3(0.0, 0.0, 1.0), t, glassMat, true, 5.0); }
       }
       let t2 = (boxMax.z - ro.z) / rd.z; if (t2 > 1e-4 && t2 < best.t) {
-        let p = ro + t2*rd; if (p.y >= boxMin.y && p.y <= boxMax.y && p.x >= boxMin.x && p.x <= boxMax.x) { best = Hit(p, vec3(0.0, 0.0, -1.0), t2, glassMat, true); }
+        let p = ro + t2*rd; if (p.y >= boxMin.y && p.y <= boxMax.y && p.x >= boxMin.x && p.x <= boxMax.x) { best = Hit(p, vec3(0.0, 0.0, -1.0), t2, glassMat, true, 6.0); }
       }
     }
     if (abs(rd.y) > 1e-5) {
       let t = (boxMin.y - ro.y) / rd.y; if (t > 1e-4 && t < best.t) {
-        let p = ro + t*rd; if (p.x >= boxMin.x && p.x <= boxMax.x && p.z >= boxMin.z && p.z <= boxMax.z) { best = Hit(p, vec3(0.0, 1.0, 0.0), t, glassMat, true); }
+        let p = ro + t*rd; if (p.x >= boxMin.x && p.x <= boxMax.x && p.z >= boxMin.z && p.z <= boxMax.z) { best = Hit(p, vec3(0.0, 1.0, 0.0), t, glassMat, true, 7.0); }
       }
     }
   }
@@ -307,7 +262,7 @@ fn intersectScene(ro: vec3<f32>, rd: vec3<f32>) -> Hit {
           let userColor = uni.blobColor.xyz; let userIntensity = uni.blobColor.w;
           let baseCol = mix(userColor * 0.5, userColor * 0.2, heatHeight);
           let emitCol = mix(userColor * userIntensity, userColor * (userIntensity * 0.2), heatHeight);
-          best = Hit(p, n, t_march, Material(baseCol, uni.settings.z, 0.0, emitCol), true);
+          best = Hit(p, n, t_march, Material(baseCol, uni.settings.z, 0.0, emitCol), true, 10.0 + f32(i));
         }
         break;
       }
@@ -345,13 +300,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     case 3u: { spp = 32u; maxB = 5u; }
     default: { spp = 64u; maxB = 6u; }
   }
-  var accumColor = vec3<f32>(0.0); var accumAlbedo = vec3<f32>(0.0); var accumNormal = vec3<f32>(0.0); var accumDepth = 0.0;
+  var accumColor = vec3<f32>(0.0); var accumAlbedo = vec3<f32>(0.0); var accumNormal = vec3<f32>(0.0); var accumDepth = 0.0; var accumId = 0.0;
   for (var s = 0u; s < spp; s = s + 1u) {
     var rng = pcg_init(pix.x, pix.y, fi, s); let jitterFrame = pixel_jitter(fi); let xi = vec2<f32>(rng_f32(&rng), rng_f32(&rng));
     let uv = ((vec2<f32>(pix) + xi + jitterFrame) / res) * 2.0 - 1.0;
     let ro = uni.camPos.xyz; let rd = normalize(uv.x * uni.camU.xyz + uv.y * uni.camV.xyz + uni.camW.xyz);
     var throughput = vec3(1.0); var radiance = vec3(0.0); var rayO = ro; var rayD = rd;
-    var firstNormal = vec3(0.0); var firstAlbedo = vec3(0.0); var firstDepth = 0.0; var stored = false;
+    var firstNormal = vec3(0.0); var firstAlbedo = vec3(0.0); var firstDepth = 0.0; var firstId = -1.0; var stored = false;
     let rect = RectLight(vec3(0.0, 2.4, -1.6), vec3(0.8,0,0), vec3(0,0,-0.3), vec3(30.0));
     for (var bounce = 0u; bounce < maxB; bounce = bounce + 1u) {
       let h = intersectScene(rayO, rayD); if (!h.hit) { break; }
@@ -363,7 +318,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         if (xiG < fres) { rayO = h.p + nl * 1e-3; rayD = reflect(vd, nl); } else { rayO = h.p - nl * 1e-3; rayD = refractDir(vd, nl, eta); throughput *= vec3(0.98, 0.98, 1.0); }
         continue;
       }
-      if (!stored) { firstNormal = h.n; firstAlbedo = h.mat.base; firstDepth = h.t; stored = true; }
+      if (!stored) { firstNormal = h.n; firstAlbedo = h.mat.base; firstDepth = h.t; firstId = h.id; stored = true; }
       if (length(h.mat.emit) > 0.0) { radiance += throughput * h.mat.emit; break; }
       let xiL = vec2<f32>(rng_f32(&rng), rng_f32(&rng)); let lp = sampleRectLight(rect, xiL); let ldir = normalize(lp - h.p); let dist = length(lp - h.p);
       if (traceShadow(h.p + h.n * 1e-3, ldir, dist)) {
@@ -380,10 +335,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
       if (bounce >= 2u) { let p = clamp(max(throughput.x, max(throughput.y, throughput.z)), 0.2, 0.95); if (rng_f32(&rng) > p) { break; } throughput /= p; }
     }
     radiance = min(radiance, vec3(8.0)); accumColor += radiance;
-    if (stored) { accumAlbedo += firstAlbedo; accumNormal += firstNormal; accumDepth += firstDepth; }
+    if (stored) { accumAlbedo += firstAlbedo; accumNormal += firstNormal; accumDepth += firstDepth; accumId += firstId; }
   }
   let invSpp = 1.0 / f32(spp);
   textureStore(radianceTex, vec2<i32>(gid.xy), vec4<f32>(accumColor * invSpp, 1.0));
   textureStore(gbufAlbedo, vec2<i32>(gid.xy), vec4<f32>(accumAlbedo * invSpp, 1.0));
   textureStore(gbufNormalDepth, vec2<i32>(gid.xy), vec4<f32>(accumNormal * invSpp * 0.5 + 0.5, accumDepth * invSpp));
+  textureStore(idDepthTex, vec2<i32>(gid.xy), vec4<f32>(accumId * invSpp, accumDepth * invSpp, 0.0, 1.0));
+  textureStore(motionTex, vec2<i32>(gid.xy), vec4<f32>(0.0, 0.0, 0.0, 1.0));
 }
