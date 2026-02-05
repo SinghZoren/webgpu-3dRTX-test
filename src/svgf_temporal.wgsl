@@ -73,7 +73,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   textureStore(colorOut, p, vec4<f32>(accum, 1.0));
   textureStore(momentsOut, p, vec4<f32>(mean, m2, 0.0, 0.0));
   
-  // Minimal use of debug textures to prevent them being optimized out
+
   let mot = textureLoad(motionIn, p, 0).xy;
   let idD1 = textureLoad(curIdDepth, p, 0).xy;
   let idD2 = textureLoad(prevIdDepth, p, 0).xy;
